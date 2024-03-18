@@ -369,6 +369,7 @@ struct sensor_device_template
 		int index;
 	} u;
 	bool s2; /* true if both index and nr are used */
+	int count; /* upper limit for second index in the name */
 };
 
 struct sensor_device_attr_u
@@ -392,7 +393,8 @@ struct sensor_device_attr_u
 	{                                                                   \
 		.dev_attr = __TEMPLATE_ATTR(_template, _mode, _show, _store),   \
 		.u.index = _index,                                              \
-		.s2 = false                                                     \
+		.s2 = false,                                                    \
+		.count = 1,                                                     \
 	}
 
 #define SENSOR_DEVICE_TEMPLATE_2(_template, _mode, _show, _store,     \
@@ -401,7 +403,25 @@ struct sensor_device_attr_u
 		.dev_attr = __TEMPLATE_ATTR(_template, _mode, _show, _store), \
 		.u.s.index = _index,                                          \
 		.u.s.nr = _nr,                                                \
-		.s2 = true                                                    \
+		.s2 = true,                                                   \
+		.count = 1,                                                   \
+	}
+
+/*
+ * SENSOR_DEVICE_TEMPLATE_2 with a count.
+ *
+ * To be used for templates that need to be instantiated multiple times, like
+ * pwm1_auto_point2_temp, and have two %d placeholders in its name.
+ * The second placeholder iterates from _index to (_index + _count).
+ */
+#define SENSOR_DEVICE_TEMPLATE_2C(_template, _mode, _show, _store,    \
+								  _nr, _index, _count)                \
+	{                                                                 \
+		.dev_attr = __TEMPLATE_ATTR(_template, _mode, _show, _store), \
+		.u.s.index = _index,                                          \
+		.u.s.nr = _nr,                                                \
+		.s2 = true,                                                   \
+		.count = _count,                                              \
 	}
 
 #define SENSOR_TEMPLATE(_name, _template, _mode, _show, _store, _index)                                                        \
@@ -412,6 +432,18 @@ struct sensor_device_attr_u
 						  _nr, _index)                                                                                           \
 	static struct sensor_device_template sensor_dev_template_##_name = SENSOR_DEVICE_TEMPLATE_2(_template, _mode, _show, _store, \
 																								_nr, _index)
+
+/*
+ * SENSOR_TEMPLATE_2 with a count.
+ *
+ * To be used for templates that need to be instantiated multiple times, like
+ * pwm1_auto_point2_temp, and have two %d placeholders in its name.
+ * The second placeholder iterates from _index to (_index + _count).
+ */
+#define SENSOR_TEMPLATE_2C(_name, _template, _mode, _show, _store,                                                                \
+						   _nr, _index, _count)                                                                                   \
+	static struct sensor_device_template sensor_dev_template_##_name = SENSOR_DEVICE_TEMPLATE_2C(_template, _mode, _show, _store, \
+																								 _nr, _index, _count)
 
 struct sensor_template_group
 {
@@ -440,14 +472,14 @@ static struct attribute_group *nct6687_create_attr_group(struct device *dev, con
 	struct sensor_device_attr_u *su;
 	struct attribute_group *group;
 	struct attribute **attrs;
-	int i, j, count;
+	int i, j, k, count, sub_index;
 
 	if (repeat <= 0)
 		return ERR_PTR(-EINVAL);
 
 	t = tg->templates;
-	for (count = 0; *t; t++, count++)
-		;
+	for (count = 0; *t; t++)
+		count += (*t)->count;
 
 	if (count == 0)
 		return ERR_PTR(-EINVAL);
@@ -473,33 +505,37 @@ static struct attribute_group *nct6687_create_attr_group(struct device *dev, con
 
 		for (j = 0; *t != NULL; j++)
 		{
-			snprintf(su->name, sizeof(su->name), (*t)->dev_attr.attr.name, tg->base + i);
+			for (k = 0; k < (*t)->count; k++)
+			{
+				sub_index = (*t)->s2 ? (*t)->u.s.index + k : 0;
+				snprintf(su->name, sizeof(su->name), (*t)->dev_attr.attr.name, tg->base + i, sub_index);
 
-			if ((*t)->s2)
-			{
-				a2 = &su->u.a2;
-				sysfs_attr_init(&a2->dev_attr.attr);
-				a2->dev_attr.attr.name = su->name;
-				a2->nr = (*t)->u.s.nr + i;
-				a2->index = (*t)->u.s.index;
-				a2->dev_attr.attr.mode = (*t)->dev_attr.attr.mode;
-				a2->dev_attr.show = (*t)->dev_attr.show;
-				a2->dev_attr.store = (*t)->dev_attr.store;
-				*attrs = &a2->dev_attr.attr;
+				if ((*t)->s2)
+				{
+					a2 = &su->u.a2;
+					sysfs_attr_init(&a2->dev_attr.attr);
+					a2->dev_attr.attr.name = su->name;
+					a2->nr = (*t)->u.s.nr + i;
+					a2->index = sub_index;
+					a2->dev_attr.attr.mode = (*t)->dev_attr.attr.mode;
+					a2->dev_attr.show = (*t)->dev_attr.show;
+					a2->dev_attr.store = (*t)->dev_attr.store;
+					*attrs = &a2->dev_attr.attr;
+				}
+				else
+				{
+					a = &su->u.a1;
+					sysfs_attr_init(&a->dev_attr.attr);
+					a->dev_attr.attr.name = su->name;
+					a->index = (*t)->u.index + i;
+					a->dev_attr.attr.mode = (*t)->dev_attr.attr.mode;
+					a->dev_attr.show = (*t)->dev_attr.show;
+					a->dev_attr.store = (*t)->dev_attr.store;
+					*attrs = &a->dev_attr.attr;
+				}
+				attrs++;
+				su++;
 			}
-			else
-			{
-				a = &su->u.a1;
-				sysfs_attr_init(&a->dev_attr.attr);
-				a->dev_attr.attr.name = su->name;
-				a->index = (*t)->u.index + i;
-				a->dev_attr.attr.mode = (*t)->dev_attr.attr.mode;
-				a->dev_attr.show = (*t)->dev_attr.show;
-				a->dev_attr.store = (*t)->dev_attr.store;
-				*attrs = &a->dev_attr.attr;
-			}
-			attrs++;
-			su++;
 			t++;
 		}
 	}
