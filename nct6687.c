@@ -637,9 +637,10 @@ static enum pwm_enable nct6687_get_pwm_enable(struct nct6687_data *data, int ind
 	return firmware_mode;
 }
 
+/* This function updates values which change on their own. */
 static void nct6687_update_fans(struct nct6687_data *data)
 {
-	int i, j;
+	int i;
 
 	for (i = 0; i < NCT6687_NUM_REG_FAN; i++)
 	{
@@ -654,15 +655,29 @@ static void nct6687_update_fans(struct nct6687_data *data)
 
 	for (i = 0; i < NCT6687_NUM_REG_PWM; i++)
 	{
+		if (data->pwm_enable[i] == manual_mode)
+			continue;
+
 		data->pwm[i] = nct6687_read(data, NCT6687_REG_PWM(i));
+
+		pr_debug("nct6687_update_fans[%d], pwm=%d", i, data->pwm[i]);
+	}
+}
+
+/* This function updates values which don't normally change on their own. */
+static void nct6687_update_config(struct nct6687_data *data)
+{
+	int i, j;
+
+	for (i = 0; i < NCT6687_NUM_REG_PWM; i++)
+	{
 		data->pwm_enable[i] = nct6687_get_pwm_enable(data, i);
+
 		for (j = 0; j < NCT6687_NUM_REG_PWM_POINTS; ++j)
 		{
 			data->auto_point_temp[i][j] = nct6687_read(data, NCT6687_REG_FAN_SF4_TEMP(i, j));
 			data->auto_point_pwm[i][j] = nct6687_read16(data, NCT6687_REG_FAN_SF4_PWM(i, j));
 		}
-
-		pr_debug("nct6687_update_fans[%d], pwm=%d", i, data->pwm[i]);
 	}
 }
 
@@ -674,6 +689,10 @@ static struct nct6687_data *nct6687_update_device(struct device *dev)
 
 	if (time_after(jiffies, data->last_updated + HZ) || !data->valid)
 	{
+		/* Configuration which is reset after leaving S3 state */
+		if (!data->valid)
+			nct6687_update_config(data);
+
 		/* Measured voltages and limits */
 		nct6687_update_voltage(data);
 
