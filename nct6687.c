@@ -601,6 +601,12 @@ static void nct6687_write(struct nct6687_data *data, u16 address, u16 value)
 	mutex_unlock(&data->EC_io_lock);
 }
 
+static void nct6687_write16(struct nct6687_data *data, u16 address, u16 value)
+{
+	nct6687_write(data, address, value >> 8);
+	nct6687_write(data, address + 1, value & 0xff);
+}
+
 static void nct6687_update_temperatures(struct nct6687_data *data)
 {
 	int i;
@@ -881,6 +887,7 @@ static bool start_fan_cfg_update(struct nct6687_data *data, int fan)
 
 	engsts = nct6687_read(data, NCT6687_REG_FAN_ENGINE_STS);
 	if (!(engsts & NCT6687_FAN_CFG_LOCK) && (engsts & NCT6687_FAN_CFG_PHASE)) {
+		// why this gets printed? 
 		pr_warn("Fan registers are already accessible\n");
 		return true;
 	}
@@ -943,6 +950,7 @@ static void finish_fan_cfg_update(struct nct6687_data *data, int fan)
 		pr_warn("The device rejected new configuration as invalid\n");
 
 	if (!(engsts & NCT6687_FAN_CFG_LOCK))
+		// why this gets printed? 
 		pr_warn("Fan registers are still accessible\n");
 }
 
@@ -1078,8 +1086,43 @@ static ssize_t show_auto_point_temp(struct device *dev, struct device_attribute 
 
 static ssize_t store_auto_point_temp(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
+	struct nct6687_data *data = nct6687_update_device(dev);
+	struct sensor_device_attribute_2 *sattr = to_sensor_dev_attr_2(attr);
+	int fan = sattr->nr;
+	int point = sattr->index - 1;
+
+	// TODO: fail if not SmartFanIV 
+
+	unsigned long val;
+	if (fan >= NCT6687_NUM_REG_PWM || point >= NCT6687_NUM_REG_PWM_POINTS || kstrtoul(buf, 10, &val))
+		return -EINVAL;
+
+	int min = data->pwm_auto_temp_off[fan] + data->pwm_auto_temp_hyst[fan];
+	if (point > 0 && data->auto_point_temp[fan][point - 1] > min)
+		min = data->auto_point_temp[fan][point - 1];
+
+	int max = 100;
+	if (point < NCT6687_NUM_REG_PWM_POINTS - 1 && data->auto_point_temp[fan][point + 1] < max)
+		max = data->auto_point_temp[fan][point + 1];
+
+	if (val < min || val > max)
+		return -EINVAL;
+
+	mutex_lock(&data->update_lock);
+
 	// TODO 
-	return 0;
+	/* nct6687_save_fan_control(data, index); */
+	if (start_fan_cfg_update(data, fan)) {
+		nct6687_write(data, NCT6687_REG_FAN_SF4_TEMP(fan, point), val);
+		finish_fan_cfg_update(data, fan);
+
+		data->auto_point_temp[fan][point] = val;
+	}
+	// XXX: read it back? 
+
+	mutex_unlock(&data->update_lock);
+
+	return count;
 }
 
 static ssize_t show_auto_point_pwm(struct device *dev, struct device_attribute *attr, char *buf)
@@ -1092,8 +1135,41 @@ static ssize_t show_auto_point_pwm(struct device *dev, struct device_attribute *
 
 static ssize_t store_auto_point_pwm(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
+	struct nct6687_data *data = nct6687_update_device(dev);
+	struct sensor_device_attribute_2 *sattr = to_sensor_dev_attr_2(attr);
+	int fan = sattr->nr;
+	int point = sattr->index - 1;
+
+	// TODO: fail if not SmartFanIV 
+
+	unsigned long val;
+	if (fan >= NCT6687_NUM_REG_PWM || point >= NCT6687_NUM_REG_PWM_POINTS || kstrtoul(buf, 10, &val))
+		return -EINVAL;
+
+	int min = 0, max = 255;
+	if (point > 0 && data->auto_point_pwm[fan][point - 1] > min)
+		min = data->auto_point_pwm[fan][point - 1];
+	if (point < NCT6687_NUM_REG_PWM_POINTS - 1 && data->auto_point_pwm[fan][point + 1] < max)
+		max = data->auto_point_pwm[fan][point + 1];
+
+	if (val < min || val > max)
+		return -EINVAL;
+
+	mutex_lock(&data->update_lock);
+
 	// TODO 
-	return 0;
+	/* nct6687_save_fan_control(data, index); */
+	if (start_fan_cfg_update(data, fan)) {
+		nct6687_write16(data, NCT6687_REG_FAN_SF4_PWM(fan, point), val);
+		finish_fan_cfg_update(data, fan);
+
+		data->auto_point_pwm[fan][point] = val;
+	}
+	// XXX: read it back? 
+
+	mutex_unlock(&data->update_lock);
+
+	return count;
 }
 
 SENSOR_TEMPLATE(pwm, "pwm%d", S_IRUGO, show_pwm, store_pwm, 0);
@@ -1119,6 +1195,7 @@ static void nct6687_save_fan_control(struct nct6687_data *data, int index)
 	}
 }
 
+// TODO: move {start,finish}_fan_cfg_update() outside of the function 
 static void nct6687_restore_fan_control(struct nct6687_data *data, int index)
 {
 	if (data->_restoreDefaultFanControlRequired[index])
