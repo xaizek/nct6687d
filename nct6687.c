@@ -702,7 +702,7 @@ static void nct6687_update_fans(struct nct6687_data *data)
 }
 
 /* This function updates values which don't normally change on their own. */
-static void nct6687_update_config(struct nct6687_data *data)
+static void nct6687_load_static_pwm_data(struct nct6687_data *data)
 {
 	int i, j;
 
@@ -733,7 +733,7 @@ static struct nct6687_data *nct6687_update_device(struct device *dev)
 	{
 		/* Configuration which is reset after leaving S3 state */
 		if (!data->valid)
-			nct6687_update_config(data);
+			nct6687_load_static_pwm_data(data);
 
 		/* Measured voltages and limits */
 		nct6687_update_voltage(data);
@@ -1377,27 +1377,19 @@ static void nct6687_setup_temperatures(struct nct6687_data *data)
 	}
 }
 
-static void nct6687_setup_pwm(struct nct6687_data *data)
+static void nct6687_setup_pwm_data(struct nct6687_data *data)
 {
-	int i, j;
+	int i;
+
+	nct6687_load_static_pwm_data(data);
 
 	for (i = 0; i < NCT6687_NUM_REG_PWM; i++)
 	{
 		data->_initialFanPwmCommand[i] = nct6687_read(data, NCT6687_REG_FAN_PWM_COMMAND(i));
 		data->pwm[i] = nct6687_read(data, NCT6687_REG_PWM(i));
-		data->pwm_enable[i] = nct6687_get_pwm_enable(data, i);
-		data->pwm_stop_time[i] = nct6687_read(data, NCT6687_REG_FAN_SF4_STOP_TIME(i));
-		data->pwm_auto_temp_hyst[i] = nct6687_read(data, NCT6687_REG_FAN_SF4_TEMP_HYST(i));
-		data->pwm_auto_temp_off[i] = nct6687_read(data, NCT6687_REG_FAN_SF4_TEMP_OFF(i));
-		data->pwm_auto_sources[i] = nct6687_read32(data, NCT6687_REG_FAN_SF4_MTZ(i));
 
-		for (j = 0; j < NCT6687_NUM_REG_PWM_POINTS; ++j)
-		{
-			data->auto_point_temp[i][j] = nct6687_read(data, NCT6687_REG_FAN_SF4_TEMP(i, j));
-			data->auto_point_pwm[i][j] = nct6687_read16(data, NCT6687_REG_FAN_SF4_PWM(i, j));
-		}
-
-		pr_debug("nct6687_setup_pwm[%d], addr=%04X, pwm=%d, pwm_enable=%d, _initialFanPwmCommand=%d\n",
+		pr_debug("%s[%d], addr=%04X, pwm=%d, pwm_enable=%d, _initialFanPwmCommand=%d\n",
+		         __func__,
 		         i,
 		         NCT6687_REG_FAN_PWM_COMMAND(i),
 		         data->pwm[i],
@@ -1455,7 +1447,7 @@ static int nct6687_probe(struct platform_device *pdev)
 
 	nct6687_init_device(data);
 	nct6687_setup_fans(data);
-	nct6687_setup_pwm(data);
+	nct6687_setup_pwm_data(data);
 	nct6687_setup_temperatures(data);
 	nct6687_setup_voltages(data);
 
