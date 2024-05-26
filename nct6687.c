@@ -186,6 +186,8 @@ static inline void superio_exit(int ioreg)
 #define NCT6687_REG_FAN_SF4_STOP_TIME(fan)  (0xB00 + 0x18*(fan) + 0x17)     /* 8 bit */
 #define NCT6687_REG_FAN_SF4_TEMP(fan, temp) (0xB00 + 0x18*(fan) + (temp))   /* 8 bit */
 #define NCT6687_REG_FAN_SF4_PWM(fan, temp)  (0xB07 + 0x18*(fan) + (temp)*2) /* 16 bit */
+// Main Termal Zone
+#define NCT6687_REG_FAN_SF4_MTZ(fan)        (0x910 + 4*(fan))               /* 32 bit */
 #define NCT6687_FAN_CFG_REQ 0x80
 //#define NCT6687_FAN_CFG_DONE          0x40    //! for 6683 returns auto mode and clears 0xA00, 0xA28-0xA2F registers
 #define NCT6687_FAN_CFG_DONE            0x00    //! tested on 6683 6687
@@ -369,6 +371,8 @@ struct nct6687_data
 	u8 pwm_stop_time[NCT6687_NUM_REG_PWM];
 	u8 pwm_auto_temp_off[NCT6687_NUM_REG_PWM];
 	u8 pwm_auto_temp_hyst[NCT6687_NUM_REG_PWM];
+	// Position of the set bit indicates temperature input index.
+	u32 pwm_auto_sources[NCT6687_NUM_REG_PWM];
 	u8 auto_point_temp[NCT6687_NUM_REG_PWM][NCT6687_NUM_REG_PWM_POINTS];
 	u16 auto_point_pwm[NCT6687_NUM_REG_PWM][NCT6687_NUM_REG_PWM_POINTS];
 
@@ -589,6 +593,11 @@ static u16 nct6687_read16(struct nct6687_data *data, u16 reg)
 	return (nct6687_read(data, reg) << 8) | nct6687_read(data, reg + 1);
 }
 
+static u16 nct6687_read32(struct nct6687_data *data, u16 reg)
+{
+	return ((u32)nct6687_read16(data, reg) << 16) | nct6687_read16(data, reg + 2);
+}
+
 static void nct6687_write(struct nct6687_data *data, u16 address, u16 value)
 {
 	u8 page = (u8)(address >> 8);
@@ -605,6 +614,12 @@ static void nct6687_write16(struct nct6687_data *data, u16 address, u16 value)
 {
 	nct6687_write(data, address, value >> 8);
 	nct6687_write(data, address + 1, value & 0xff);
+}
+
+static void nct6687_write32(struct nct6687_data *data, u16 address, u32 value)
+{
+	nct6687_write16(data, address, value >> 16);
+	nct6687_write16(data, address + 2, value & 0xffff);
 }
 
 static void nct6687_update_temperatures(struct nct6687_data *data)
@@ -698,6 +713,7 @@ static void nct6687_update_config(struct nct6687_data *data)
 		data->pwm_stop_time[i] = nct6687_read(data, NCT6687_REG_FAN_SF4_STOP_TIME(i));
 		data->pwm_auto_temp_hyst[i] = nct6687_read(data, NCT6687_REG_FAN_SF4_TEMP_HYST(i));
 		data->pwm_auto_temp_off[i] = nct6687_read(data, NCT6687_REG_FAN_SF4_TEMP_OFF(i));
+		data->pwm_auto_sources[i] = nct6687_read32(data, NCT6687_REG_FAN_SF4_MTZ(i));
 
 		for (j = 0; j < NCT6687_NUM_REG_PWM_POINTS; ++j)
 		{
@@ -1076,6 +1092,40 @@ static ssize_t store_auto_temp_hyst(struct device *dev, struct device_attribute 
 	return 0;
 }
 
+static ssize_t show_auto_channels_temp(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct nct6687_data *data = nct6687_update_device(dev);
+	struct sensor_device_attribute_2 *sattr = to_sensor_dev_attr_2(attr);
+
+	return sysfs_emit(buf, "%d\n", data->pwm_auto_sources[sattr->index]);
+}
+
+static ssize_t store_auto_channels_temp(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct nct6687_data *data = nct6687_update_device(dev);
+	struct sensor_device_attribute_2 *sattr = to_sensor_dev_attr_2(attr);
+	int fan = sattr->index;
+	unsigned long val;
+
+	if (kstrtoul(buf, 10, &val) ||
+		val >= (1 << NCT6687_NUM_REG_TEMP) ||
+		fan >= NCT6687_NUM_REG_FAN)
+		return -EINVAL;
+
+	mutex_lock(&data->update_lock);
+
+	if (start_fan_cfg_update(data, fan)) {
+		nct6687_write32(data, NCT6687_REG_FAN_SF4_MTZ(fan), val);
+		finish_fan_cfg_update(data, fan);
+
+		data->pwm_auto_sources[fan] = val;
+	}
+
+	mutex_unlock(&data->update_lock);
+
+	return count;
+}
+
 static ssize_t show_auto_point_temp(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct nct6687_data *data = nct6687_update_device(dev);
@@ -1177,6 +1227,7 @@ SENSOR_TEMPLATE_2(pwm_enable, "pwm%d_enable", S_IRUGO, show_pwm_enable, store_pw
 SENSOR_TEMPLATE(pwm_stop_time, "pwm%d_stop_time", S_IRUGO, show_pwm_stop_time, store_pwm_stop_time, 0);
 SENSOR_TEMPLATE(auto_temp_off, "pwm%d_auto_temp_off", S_IRUGO, show_auto_temp_off, store_auto_temp_off, 0);
 SENSOR_TEMPLATE(auto_temp_hyst, "pwm%d_auto_temp_hyst", S_IRUGO, show_auto_temp_hyst, store_auto_temp_hyst, 0);
+SENSOR_TEMPLATE(auto_channels_temp, "pwm%d_auto_channels_temp", S_IRUGO, show_auto_channels_temp, store_auto_channels_temp, 0);
 SENSOR_TEMPLATE_2C(auto_point_temp, "pwm%d_auto_point%d_temp", S_IRUGO, show_auto_point_temp, store_auto_point_temp, 0, 1, NCT6687_NUM_REG_PWM_POINTS);
 SENSOR_TEMPLATE_2C(auto_point_pwm, "pwm%d_auto_point%d_pwm", S_IRUGO, show_auto_point_pwm, store_auto_point_pwm, 0, 1, NCT6687_NUM_REG_PWM_POINTS);
 
@@ -1228,6 +1279,7 @@ static struct sensor_device_template *nct6687_attributes_pwm_template[] = {
 	&sensor_dev_template_pwm_stop_time,
 	&sensor_dev_template_auto_temp_off,
 	&sensor_dev_template_auto_temp_hyst,
+	&sensor_dev_template_auto_channels_temp,
 	&sensor_dev_template_auto_point_temp,
 	&sensor_dev_template_auto_point_pwm,
 	NULL,
@@ -1337,6 +1389,8 @@ static void nct6687_setup_pwm(struct nct6687_data *data)
 		data->pwm_stop_time[i] = nct6687_read(data, NCT6687_REG_FAN_SF4_STOP_TIME(i));
 		data->pwm_auto_temp_hyst[i] = nct6687_read(data, NCT6687_REG_FAN_SF4_TEMP_HYST(i));
 		data->pwm_auto_temp_off[i] = nct6687_read(data, NCT6687_REG_FAN_SF4_TEMP_OFF(i));
+		data->pwm_auto_sources[i] = nct6687_read32(data, NCT6687_REG_FAN_SF4_MTZ(i));
+
 		for (j = 0; j < NCT6687_NUM_REG_PWM_POINTS; ++j)
 		{
 			data->auto_point_temp[i][j] = nct6687_read(data, NCT6687_REG_FAN_SF4_TEMP(i, j));
