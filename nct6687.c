@@ -188,9 +188,8 @@ static inline void superio_exit(int ioreg)
 #define NCT6687_REG_FAN_SF4_PWM(fan, temp)  (0xB07 + 0x18*(fan) + (temp)*2) /* 16 bit */
 // Main Termal Zone
 #define NCT6687_REG_FAN_SF4_MTZ(fan)        (0x910 + 4*(fan))               /* 32 bit */
-#define NCT6687_FAN_CFG_REQ 0x80
-//#define NCT6687_FAN_CFG_DONE          0x40    //! for 6683 returns auto mode and clears 0xA00, 0xA28-0xA2F registers
-#define NCT6687_FAN_CFG_DONE            0x00    //! tested on 6683 6687
+#define NCT6687_FAN_CFG_REQ  0x80
+#define NCT6687_FAN_CFG_DONE 0x40
 
 #define NCT6687_REG_FAN_ENGINE_STS          0xCF8    /* 8 bit */
 #define   NCT6687_FAN_PECI_CFG_ADJUSTED     (1 << 1)
@@ -903,7 +902,6 @@ static bool start_fan_cfg_update(struct nct6687_data *data, int fan)
 
 	engsts = nct6687_read(data, NCT6687_REG_FAN_ENGINE_STS);
 	if (!(engsts & NCT6687_FAN_CFG_LOCK) && (engsts & NCT6687_FAN_CFG_PHASE)) {
-		// why this gets printed? 
 		pr_warn("Fan registers are already accessible\n");
 		return true;
 	}
@@ -923,7 +921,7 @@ static bool start_fan_cfg_update(struct nct6687_data *data, int fan)
 
 	nct6687_write(data, NCT6687_REG_FAN_PWM_COMMAND(fan), NCT6687_FAN_CFG_REQ);
 
-	/* Wait up to a second until EC unlock the register set. */
+	/* Wait up to a second until EC unlocks the register set. */
 	for (i = 0; i < 1000; i++) {
 		if (!(nct6687_read(data, NCT6687_REG_FAN_ENGINE_STS) & NCT6687_FAN_CFG_LOCK))
 			break;
@@ -942,6 +940,7 @@ static void finish_fan_cfg_update(struct nct6687_data *data, int fan)
 {
 	int i;
 	u8 engsts;
+	u8 donecmd;
 
 	engsts = nct6687_read(data, NCT6687_REG_FAN_ENGINE_STS);
 	if ((engsts & NCT6687_FAN_CFG_LOCK) || !(engsts & NCT6687_FAN_CFG_PHASE)) {
@@ -949,12 +948,20 @@ static void finish_fan_cfg_update(struct nct6687_data *data, int fan)
 		return;
 	}
 
-	nct6687_write(data, NCT6687_REG_FAN_PWM_COMMAND(fan), NCT6687_FAN_CFG_DONE);
+	/*
+	 * Using NCT6687_FAN_CFG_DONE for NCT6683 reportedly switches to auto mode
+	 * and clears 0xA00, 0xA28-0xA2F registers.  This could have been an effect
+	 * of not locking/unlocking register set properly, but keep 0x00 until
+	 * someone re-tests on NCT6683.
+	 */
+	donecmd = data->kind == nct6683 ? 0x00 : NCT6687_FAN_CFG_DONE;
+
+	nct6687_write(data, NCT6687_REG_FAN_PWM_COMMAND(fan), donecmd);
 
 	/* Wait up to a second until EC checks new configuration. */
 	for (i = 0; i < 1000; i++) {
 		engsts = nct6687_read(data, NCT6687_REG_FAN_ENGINE_STS);
-		if (!(engsts & NCT6687_FAN_CFG_CHECK_DONE))
+		if (engsts & NCT6687_FAN_CFG_CHECK_DONE)
 			break;
 		msleep(1);
 	}
@@ -966,7 +973,6 @@ static void finish_fan_cfg_update(struct nct6687_data *data, int fan)
 		pr_warn("The device rejected new configuration as invalid\n");
 
 	if (!(engsts & NCT6687_FAN_CFG_LOCK))
-		// why this gets printed? 
 		pr_warn("Fan registers are still accessible\n");
 }
 
