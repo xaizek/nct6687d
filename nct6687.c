@@ -982,6 +982,8 @@ static ssize_t store_pwm(struct device *dev, struct device_attribute *attr, cons
 	struct nct6687_data *data = dev_get_drvdata(dev);
 	int index = sattr->index;
 	unsigned long val;
+	int retry;
+	u16 readback;
 	u16 mode;
 	u8 bitMask;
 
@@ -998,12 +1000,19 @@ static ssize_t store_pwm(struct device *dev, struct device_attribute *attr, cons
 	mode = (u8)(mode | bitMask);
 	nct6687_write(data, NCT6687_REG_FAN_CTRL_MODE(index), mode);
 
-	if (start_fan_cfg_update(data, index)) {
-		nct6687_write(data, NCT6687_REG_PWM_WRITE(index), val);
-		finish_fan_cfg_update(data, index);
-	}
+	nct6687_write(data, NCT6687_REG_FAN_PWM_COMMAND(index), NCT6687_FAN_CFG_REQ);
+	msleep(50);
+	nct6687_write(data, NCT6687_REG_PWM_WRITE(index), val);
+	nct6687_write(data, NCT6687_REG_FAN_PWM_COMMAND(index), NCT6687_FAN_CFG_DONE);
 
-	data->pwm[index] = nct6687_read(data, NCT6687_REG_PWM(index));
+	for (retry = 0; retry < 20; retry++) {
+		msleep(50);
+
+		readback = nct6687_read(data, NCT6687_REG_PWM(index));
+		if (readback == val)
+			break;
+	}
+	data->pwm[index] = readback;
 	data->pwm_enable[index] = nct6687_get_pwm_enable(data, index);
 
 	mutex_unlock(&data->update_lock);
@@ -1050,6 +1059,7 @@ static ssize_t store_pwm_enable(struct device *dev, struct device_attribute *att
 	}
 
 	nct6687_write(data, NCT6687_REG_FAN_CTRL_MODE(index), mode);
+	data->pwm_enable[index] = nct6687_get_pwm_enable(data, index);
 
 	mutex_unlock(&data->update_lock);
 
