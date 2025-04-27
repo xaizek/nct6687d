@@ -1056,6 +1056,7 @@ static ssize_t store_pwm_enable(struct device *dev, struct device_attribute *att
 	}
 
 	nct6687_write(data, NCT6687_REG_FAN_CTRL_MODE(index), mode);
+	data->pwm_enable[index] = nct6687_get_pwm_enable(data, index);
 
 	mutex_unlock(&data->update_lock);
 
