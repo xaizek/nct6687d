@@ -80,6 +80,109 @@ static const char *const nct6687_chip_names[] = {
 	"NCT6687D",
 };
 
+static const char *const nct6687_monitor_labels[] = {
+	/* Temperature sources/sensors (TIN) */
+	[0x00] = "Disabled",
+	[0x01] = "Local",
+	[0x02] = "Thermal Diod 0 (current mode)",
+	[0x03] = "Thermal Diod 1 (current mode)",
+	[0x04] = "Thermal Diod 2 (current mode)",
+	[0x05] = "Thermal Diod 0 (voltage mode)",
+	[0x06] = "Thermal Diod 1 (voltage mode)",
+	[0x07] = "Thermal Diod 2 (voltage mode)",
+	[0x08] = "Thermistor 14",
+	[0x09] = "Thermistor 15",
+	[0x0A] = "Thermistor 16",
+	[0x0B] = "Thermistor 0",
+	[0x0C] = "Thermistor 1",
+	[0x0D] = "Thermistor 2",
+	[0x0E] = "Thermistor 3",
+	[0x0F] = "Thermistor 4",
+	[0x10] = "Thermistor 5",
+	[0x11] = "Thermistor 6",
+	[0x12] = "Thermistor 7",
+	[0x13] = "Thermistor 8",
+	[0x14] = "Thermistor 9",
+	[0x15] = "Thermistor 10",
+	[0x16] = "Thermistor 11",
+	[0x17] = "Thermistor 12",
+	[0x18] = "Thermistor 13",
+	[0x20] = "PECI Agent 0 Domain 0",
+	[0x21] = "PECI Agent 1 Domain 0",
+	[0x22] = "PECI Agent 2 Domain 0",
+	[0x23] = "PECI Agent 3 Domain 0",
+	[0x24] = "PECI Agent 0 Domain 1",
+	[0x25] = "PECI Agent 1 Domain 1",
+	[0x26] = "PECI Agent 2 Domain 1",
+	[0x27] = "PECI Agent 3 Domain 1",
+	[0x28] = "PECI DIMM 0",
+	[0x29] = "PECI DIMM 1",
+	[0x2A] = "PECI DIMM 2",
+	[0x2B] = "PECI DIMM 3",
+	[0x30] = "PCH CPU",
+	[0x31] = "PCH Chip",
+	[0x32] = "PCH Chip CPU Max",
+	[0x33] = "PCH MCH",
+	[0x34] = "PCH DIMM0",
+	[0x35] = "PCH DIMM1",
+	[0x36] = "PCH DIMM2",
+	[0x37] = "PCH DIMM3",
+	[0x38] = "SMBUS 0",
+	[0x39] = "SMBUS 1",
+	[0x3A] = "SMBUS 2",
+	[0x3B] = "SMBUS 3",
+	[0x3C] = "SMBUS 4",
+	[0x3D] = "SMBUS 5",
+	[0x3E] = "DIMM 0",
+	[0x3F] = "DIMM 1",
+	[0x40] = "DIMM 2",
+	[0x41] = "DIMM 3",
+	[0x42] = "AMD TSI Address 0x90",
+	[0x43] = "AMD TSI Address 0x92",
+	[0x44] = "AMD TSI Address 0x94",
+	[0x45] = "AMD TSI Address 0x96",
+	[0x46] = "AMD TSI Address 0x98",
+	[0x47] = "AMD TSI Address 0x9A",
+	[0x48] = "AMD TSI Address 0x9C",
+	[0x49] = "AMD TSI Address 0x9D",
+	[0x50] = "Virtual 0",
+	[0x51] = "Virtual 1",
+	[0x52] = "Virtual 2",
+	[0x53] = "Virtual 3",
+	[0x54] = "Virtual 4",
+	[0x55] = "Virtual 5",
+	[0x56] = "Virtual 6",
+	[0x57] = "Virtual 7",
+
+	/* Voltage sources/sensors (VIN) */
+	[0x60] = "VCC",
+	[0x61] = "VSB",
+	[0x62] = "AVSB",
+	[0x63] = "VTT",
+	[0x64] = "VBAT",
+	[0x65] = "VREF",
+	[0x66] = "VIN0",
+	[0x67] = "VIN1",
+	[0x68] = "VIN2",
+	[0x69] = "VIN3",
+	[0x6A] = "VIN4",
+	[0x6B] = "VIN5",
+	[0x6C] = "VIN6",
+	[0x6D] = "VIN7",
+	[0x6E] = "VIN8",
+	[0x6F] = "VIN9",
+	[0x70] = "VIN10",
+	[0x71] = "VIN11",
+	[0x72] = "VIN12",
+	[0x73] = "VIN13",
+	[0x74] = "VIN14",
+	[0x75] = "VIN15",
+	[0x76] = "VIN16",
+};
+
+#define MON_LABELS_COUNT	ARRAY_SIZE(nct6687_monitor_labels)
+#define MON_FIRST_VOLTAGE	0x60
+
 #define DRVNAME "nct6687"
 
 /*
@@ -158,6 +261,7 @@ static inline void superio_exit(int ioreg)
 #define NCT6687_NUM_REG_TEMP 7
 #define NCT6687_NUM_REG_FAN 8
 #define NCT6687_NUM_REG_PWM 8
+#define NCT6687_NUM_REG_MON 32
 
 #define NCT6687_REG_TEMP(x) (0x100 + (x)*2)
 #define NCT6687_REG_VOLTAGE(x) (0x120 + (x)*2)
@@ -167,7 +271,8 @@ static inline void superio_exit(int ioreg)
 
 #define NCT6687_HWM_CFG 0x180
 
-#define NCT6687_REG_MON_CFG(x) (0x1a0 + (x))
+#define NCT6687_REG_MON_CFG(x) (0x1a0 + (x)) /* 8 bit */
+#define  NCT6687_SENSOR_SRC_SEL_MASK 0x7f
 #define NCT6687_REG_FANIN_CFG(x) (0xA00 + (x))
 #define NCT6687_REG_FANOUT_CFG(x) (0x1d0 + (x))
 
@@ -1039,6 +1144,30 @@ static inline void nct6687_init_device(struct nct6687_data *data)
 	nct6687_write(data, 0x1BF, 0x65);
 }
 
+static void nct6687_dump_mapping(struct nct6687_data *data)
+{
+	unsigned i;
+
+	pr_info("Monitor sensors mapping:\n");
+	for (i = 0; i < NCT6687_NUM_REG_MON; i++) {
+		u8 s;
+		const char *kind;
+
+		s = nct6687_read(data, NCT6687_REG_MON_CFG(i)) & NCT6687_SENSOR_SRC_SEL_MASK;
+		kind = s >= MON_FIRST_VOLTAGE ? "volt" : s > 0 ? "temp" : "none";
+
+		if (s >= MON_LABELS_COUNT)
+			pr_info("  #%02d |      | %#04x: Unknown\n",
+				i, s);
+		else if (nct6687_monitor_labels[s] == NULL)
+			pr_info("  #%02d | %s | %#04x: Unmapped \n",
+				i, kind, s);
+		else
+			pr_info("  #%02d | %s | %#04x: %s\n",
+				i, kind, s, nct6687_monitor_labels[s]);
+	}
+}
+
 /*
  * There are a total of 8 fan inputs.
  */
@@ -1169,6 +1298,8 @@ static int nct6687_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, data);
 
 	nct6687_init_device(data);
+	// TODO: guard this with an option
+	nct6687_dump_mapping(data);
 	nct6687_setup_fans(data);
 	nct6687_setup_pwm(data);
 	nct6687_setup_temperatures(data);
